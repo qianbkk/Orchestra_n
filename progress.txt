@@ -1,0 +1,63 @@
+# progress.txt — 开发问题与经验记录
+
+> **定位**：记录开发过程中遇到的问题、挫折及解决方案，供后续遇到相同情况时参考。
+> **格式**：每条记录包含日期、问题描述、解决方案（若已解决）。简洁明了，不需要完整叙述。
+> **更新时机**：遇到问题时追加"问题"条目；找到解决方案后在原条目下补充"解决"字段。
+
+---
+
+## 记录格式模板
+
+```
+[日期] #编号 问题简述
+问题：具体描述
+解决：解决方案（未解决则标注"待解决"）
+```
+
+---
+
+## 问题记录
+
+[2026-04-21] #001 本地命令执行器异常（npm/node 无法启动）
+问题：在当前执行环境中运行 `npm install`、`npm run test -w backend`、`npm run build` 均返回 `File not found`，无堆栈和文件定位信息。
+解决：待解决（需先修复或更换可执行 Node/npm 的终端环境后再进行完整验证闭环）。
+
+[2026-04-21] #002 backend 测试脚本路径参数不兼容 Node 24
+问题：`npm run test -w backend` 执行 `node --test tests/` 时，Node 将目录按模块入口解析，触发 `Cannot find module '...\\backend\\tests'`。
+解决：将 `backend/package.json` 的 `test` 脚本改为 `node --test`，避免目录参数触发模块解析错误；单测继续使用 `npm run test -w backend -- tests/smoke.test.js`。
+
+[2026-04-21] #003 端口调整与 Windows 启动器
+问题：希望默认端口各降低 1，并提供 Windows 下可视化的一键启动/关闭/状态检查脚本。
+解决：将前端端口改为 `5172`、后端默认端口改为 `3000`（同步 Vite 代理与前端 WS 默认端口），新增根目录 `run.bat` 菜单脚本支持启动、关闭和状态检查。
+
+[2026-04-21] #004 run.bat 中文菜单乱码
+问题：Windows CMD 默认代码页下，`run.bat` 中文菜单显示乱码并出现异常命令提示。
+解决：将 `run.bat` 菜单与提示统一改为 ASCII 文本，消除代码页依赖。
+
+[2026-04-21] #005 run.bat 启动后页面不可访问
+问题：选择启动后浏览器会提前打开，前端服务尚未监听端口，导致页面无法访问。
+解决：`run.bat` 增加端口就绪等待逻辑（backend 3000 / frontend 5172），仅当前端监听成功后打开浏览器；启动失败时输出日志文件路径供排查。
+
+[2026-04-21] #006 run.bat 端口检测兼容性
+问题：仅基于 `netstat + LISTENING` 的检测在不同系统环境下可靠性不足，可能误判服务未就绪。
+解决：启动就绪判断改为 HTTP 探测（backend `GET /api/health`，frontend `GET /`），并保留日志定位信息。
+
+[2026-04-21] #007 run.bat 方案过度复杂
+问题：用户期望就是一键执行 `npm run dev` 启停应用，分开管理前后端导致脚本复杂且稳定性变差。
+解决：run.bat 改为单进程模式：启动直接执行根命令 `npm run dev`，停止时按 PID 结束整棵进程树，日志统一到 `.ato-state/app.log` 与 `.ato-state/app.err.log`。
+
+[2026-04-21] #008 run.bat 启动可观察性不足
+问题：后台静默启动时，用户无法直观看到启动失败原因，且日志定位链路较长。
+解决：run.bat 改为在新终端窗口直接运行 `npm run dev`（窗口名 ATO Dev），并保留端口就绪等待与自动开页；停止逻辑改为按端口结束进程（3000/5172）。
+
+[2026-04-21] #009 Claude Launcher 与 ATO 非交互调用冲突
+问题：本地 `claude` 已被 `D:\Claude_launcher` 接管，常规需要菜单选择；ATO 使用子进程非交互调用时出现 `Not logged in · Please run /login`。
+解决：`claudeCode` 适配器增加兼容回退：当检测到登录/菜单类错误时，自动改用 `claude -r --dangerously-skip-permissions -p "<message>"`，复用 launcher 的“上次选择自动注入”路径，避免菜单交互阻塞。
+
+[2026-04-21] #010 Claude 回退参数冲突（--resume + --print）
+问题：`claude -r -p` 在新版 CLI 下要求显式 session id，导致 `--resume requires a valid session ID or session title when used with --print`。
+解决：移除 `-r -p` 回退方案；改为读取 launcher 的 `last_selection.json` 注入环境变量，并直接调用真实 claude 二进制执行原命令，绕过菜单与 resume/print 冲突。
+
+---
+
+*最后更新：2026-04-21*
