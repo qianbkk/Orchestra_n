@@ -56,8 +56,15 @@ function loadLauncherSelectionEnv() {
     return null;
   }
   try {
-    const raw = fs.readFileSync(selectionPath, "utf8").replace(/^\uFEFF/, "");
-    const data = JSON.parse(raw);
+    const bytes = fs.readFileSync(selectionPath);
+    let raw = bytes.toString("utf8").replace(/^\uFEFF/, "");
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      raw = bytes.toString("utf16le").replace(/^\uFEFF/, "");
+      data = JSON.parse(raw);
+    }
     if (!data.base_url || !data.api_key || !data.model) {
       return null;
     }
@@ -82,6 +89,14 @@ class ClaudeCodeAdapter extends CLIAdapter {
   constructor(agent, workdir) {
     super(agent, workdir);
     this.supportsContinue = null;
+    this._launcherEnv = undefined;
+  }
+
+  _getLauncherEnv() {
+    if (this._launcherEnv === undefined) {
+      this._launcherEnv = loadLauncherSelectionEnv();
+    }
+    return this._launcherEnv;
   }
 
   async checkAvailable() {
@@ -102,6 +117,7 @@ class ClaudeCodeAdapter extends CLIAdapter {
 
     const runClaude = (binary, args, writeInput, extraEnv = {}) =>
       new Promise((resolve, reject) => {
+        let settled = false;
         const child = spawn(binary, args, {
           cwd: this.workdir,
           env: { ...process.env, ...extraEnv },
@@ -127,12 +143,16 @@ class ClaudeCodeAdapter extends CLIAdapter {
         });
 
         child.on("error", (error) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
           this.killActiveProcess();
           reject(error);
         });
 
         child.on("close", (code, signal) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(timer);
           this.killActiveProcess();
           if (signal) {
@@ -155,25 +175,48 @@ class ClaudeCodeAdapter extends CLIAdapter {
       ? ["--dangerously-skip-permissions", "-c"]
       : ["--dangerously-skip-permissions", "-p", message];
     const realClaude = pickRealClaudePath();
+    const launcherEnv = this._getLauncherEnv();
+
+    // 优先：如果已有 launcher 上次选择，直接注入环境并调用真实 claude（绕过菜单）
+    if (launcherEnv) {
+      try {
+        return await runClaude(realClaude, defaultArgs, this.supportsContinue, launcherEnv);
+      } catch (error) {
+        const text = String(error?.message || "");
+        const authLike = text.includes("Not logged in") || text.includes("/login") || text.includes("Unauthorized");
+        if (!authLike) {
+          throw error;
+        }
+      }
+    }
 
     try {
-      return await runClaude("claude", defaultArgs, this.supportsContinue);
+      // 无 last_selection 时仍尝试直连，但强制 launcher 守卫，避免菜单阻塞
+      return await runClaude("claude", defaultArgs, this.supportsContinue, {
+        CLAUDE_LAUNCHER_ACTIVE: "1",
+      });
     } catch (firstError) {
       const text = String(firstError?.message || "");
       const loginLikeError =
-        text.includes("Not logged in") || text.includes("/login") || text.includes("No previous selection found");
+        text.includes("Not logged in") ||
+        text.includes("/login") ||
+        text.includes("No previous selection found") ||
+        text.includes("Unauthorized") ||
+        text.includes("401");
 
       if (!loginLikeError) {
         throw firstError;
       }
 
-      // 2) launcher 兼容回退：读取 last_selection 注入环境，并直接调用真实 claude 二进制
-      // 避免 `--resume` + `--print` 冲突。
-      const launcherEnv = loadLauncherSelectionEnv();
-      if (!launcherEnv) {
-        throw firstError;
+      // 回退：用户可能刚手工走过菜单，刷新 last_selection 后重试
+      this._launcherEnv = loadLauncherSelectionEnv();
+      const refreshed = this._launcherEnv;
+      if (!refreshed) {
+        throw new CLINotAvailableError(
+          "Claude launcher 未就绪。请先在终端手动运行一次 claude 并选择菜单项，再重试任务。",
+        );
       }
-      return runClaude(realClaude, defaultArgs, this.supportsContinue, launcherEnv);
+      return runClaude(realClaude, defaultArgs, this.supportsContinue, refreshed);
     }
   }
 }

@@ -58,6 +58,18 @@
 问题：`claude -r -p` 在新版 CLI 下要求显式 session id，导致 `--resume requires a valid session ID or session title when used with --print`。
 解决：移除 `-r -p` 回退方案；改为读取 launcher 的 `last_selection.json` 注入环境变量，并直接调用真实 claude 二进制执行原命令，绕过菜单与 resume/print 冲突。
 
+[2026-04-22] #011 Claude Launcher 菜单阻塞兜底
+问题：当直连路径命中 launcher 菜单且无交互输入时，子进程可能无输出挂起，调度层长时间等待。
+解决：适配器增加“优先 last_selection 直通真实 claude + 10 秒无输出阻塞检测 + 刷新 last_selection 重试”链路，无法自动恢复时给出明确提示让用户先手动选择一次菜单。
+
+[2026-04-22] #012 前端端口漂移到 5173
+问题：用户期望前端固定在 5172，但 Vite 默认在端口占用时会自动切换到 5173。
+解决：`frontend/vite.config.js` 增加 `strictPort: true`，确保端口固定为 5172，不再自动漂移。
+
+[2026-04-22] #013 run.bat 需要支持分别启动
+问题：用户希望 bat 既能同时启动前后端，也能分别启动并可检测状态。
+解决：重构 `run.bat` 菜单，新增“Start BOTH / Start BACKEND only / Start FRONTEND only / Stop BOTH / Stop BACKEND only / Stop FRONTEND only / Check status”。
+
 ---
 
-*最后更新：2026-04-21*
+*最后更新：2026-04-22*
